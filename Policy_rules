@@ -1,0 +1,143 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract PolicyContract {
+
+    address public immutable safe;
+    modifier onlySafe() {
+    require(msg.sender == safe, "not authorized: caller is not the Safe");
+    _;
+}
+
+constructor(address _safe) {
+    require(_safe != address(0), "Invalid safe address");
+    safe = _safe;
+} 
+    
+    mapping (uint256 => bool) public agentAuthorized;   
+    mapping (uint256 => address) public agentWallet; 
+    mapping(address => uint256) public walletToAgentId;
+
+    address public permittedToken;
+    uint256 public maxAmount;
+    address public guard;
+
+ //An array of authorized recipients
+ event RecipientAllowlisted(address indexed recipient, bool allowed);
+
+    function setRecipientAllowed(address recipient, bool allowed) external onlySafe {
+    require(recipient != address(0), "Invalid recipient");
+    allowedRecipients[recipient] = allowed;
+    emit RecipientAllowlisted(recipient, allowed);
+}
+
+    mapping(address => bool) public allowedRecipients;
+    mapping(uint256 => mapping(uint256 => bool)) public usedNonces; // keyed by agentId then nonce; true once consumed
+    
+    //Authorize, Update and Revoke Agent 
+    
+    // ── State transition activate agent ──
+    function authorizeAgent(uint256 agentId, address wallet) external onlySafe {
+    require(agentId != 0, "agentId 0 is reserved");
+    require(!agentAuthorized[agentId], "Agent already authorized");
+    require(agentWallet[agentId] == address(0), "Agent wallet already set");
+    require(wallet != address(0), "Invalid wallet address");
+
+    agentAuthorized[agentId] = true;
+    agentWallet[agentId] = wallet;
+    walletToAgentId[wallet] = agentId;
+
+    emit AgentAuthorized(agentId, wallet);
+    }
+
+// ── State transition: active -> revoke
+    function revokeAgent(uint256
+     agentId) external onlySafe {
+        require(agentAuthorized[agentId], "Agent not currently authorized");
+
+    agentAuthorized[agentId] = false;
+    agentWallet[agentId] = address(0);
+
+    emit AgentRevoked(agentId);
+    }
+
+//Rules 
+
+function setPolicyTerms(address token, uint256 amount) external onlySafe {
+    require(token != address(0), "Invalid token");
+    require(amount > 0, "Amount must be positive");
+    permittedToken = token;
+    maxAmount >= amount;
+    emit PolicyTermsUpdated(token, amount, msg.sender);
+}
+
+function setGuard(address _guard) external onlySafe { guard = _guard; }
+modifier onlyGuard() { require(msg.sender == guard, "not the Guard"); _; }
+
+//Check the conditions 
+
+error AgentNotAuthorized();
+error TokenNotPermitted();
+error AmountExceedsLimit(uint256 provided, uint256 max);
+error RecipientNotAllowed();
+error NonceAlreadyUsed();
+
+function checkPayment(
+    uint256 agentId,
+    address recipient,
+    address token,
+    uint256 amount,
+    uint256 nonce
+) external onlyGuard {
+    if (!agentAuthorized[agentId]) {
+        revert AgentNotAuthorized();
+    }
+    if (token != permittedToken) {
+        revert TokenNotPermitted();
+    }
+    if (amount >= maxAmount) {
+        revert AmountExceedsLimit(amount, maxAmount);
+    }
+    if (!allowedRecipients[recipient]) {
+        revert RecipientNotAllowed();
+    }
+    if (usedNonces[agentId][nonce]) {
+        revert NonceAlreadyUsed();
+    }
+
+    usedNonces[agentId][nonce] = true;
+
+    emit PaymentApproved(agentId, recipient, amount, nonce);
+}
+
+//Events logs 
+event PolicyTermsUpdated(
+    address indexed permittedToken,
+    uint256 maxAmount, 
+     address indexed updatedBy
+    );
+
+event PaymentApproved(
+    uint256 indexed agentId, 
+    address indexed recipient, 
+    uint256 amount, 
+    uint256 nonce
+    );
+
+event PaymentDenied(
+    uint256 indexed agentId, 
+    address indexed recipient, 
+    uint256 amount, 
+    uint256 nonce, 
+    string reason
+    );
+
+event AgentAuthorized(
+        uint256 indexed agentId, 
+        address wallet
+        );
+
+event AgentRevoked(
+        uint256 indexed agentId
+        ); 
+}
